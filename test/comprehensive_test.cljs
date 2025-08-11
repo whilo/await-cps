@@ -24,7 +24,7 @@
     (promise-reject 5 (js/Error. "Division by zero"))
     (promise-delay 20 (/ a b))))
 
-;; Test cases
+;; Test cases - fn* reverted to pass-through
 (println "=== Comprehensive Async/Await Test Suite ===")
 
 ;; Test 1: Basic await

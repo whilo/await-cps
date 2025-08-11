@@ -91,10 +91,10 @@
       (and resolved (.isMacro resolved))
       (recur ctx (apply resolved form env tail))
 
-      (or (special-symbol? head) (= head 'let) (= head 'letfn) (= head 'loop))
+      (or (special-symbol? head) (= head 'let) (= head 'letfn) (= head 'loop) (= head 'fn))
       (case head
 
-        (quote var fn* def deftype* reify* clojure.core/import*)
+        (quote var fn* fn def deftype* reify* clojure.core/import*)
        `(~r ~form)
 
         if

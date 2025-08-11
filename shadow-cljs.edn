@@ -89,4 +89,10 @@
   {:target :node-script
    :output-to "target/comprehensive-test.js"
    :main comprehensive-test/-main
+   :compiler-options {:optimizations :none}}
+   
+  :debug-22
+  {:target :node-script
+   :output-to "target/debug-22.js"
+   :main debug-test-22/-main
    :compiler-options {:optimizations :none}}}}
