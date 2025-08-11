@@ -65,18 +65,15 @@
    Uses await-cps coroutine transformation to handle await calls."
   [& body]
   (if (:js-globals &env) ; ClojureScript
-      (do
-        (println "DEBUG ASYNC: body=" body)
-        (println "DEBUG ASYNC: terminators=" terminators)
-        `(js/Promise.
-           (fn [resolve# reject#]
-             ;; Use our coroutine macro with the terminators map
-             ;; The key should be the symbol that appears in code, value is the actual function
-             ;; Use the exact terminators pattern from await-cps.clj
-             (let [async-fn# (coroutine ~terminators
-                               (do ~@body))]
-               ;; Execute the coroutine with Promise resolve/reject as callbacks
-               (async-fn# resolve# reject#)))))
+      `(js/Promise.
+         (fn [resolve# reject#]
+           ;; Use our coroutine macro with the terminators map
+           ;; The key should be the symbol that appears in code, value is the actual function
+           ;; Use the exact terminators pattern from await-cps.clj
+           (let [async-fn# (coroutine ~terminators
+                             (do ~@body))]
+             ;; Execute the coroutine with Promise resolve/reject as callbacks
+             (async-fn# resolve# reject#))))
     ;; Clojure - just execute synchronously
     `(do ~@body)))
 
