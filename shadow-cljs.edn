@@ -83,4 +83,10 @@
   {:target :node-script
    :output-to "target/comprehensive-async-test.js"
    :main comprehensive-async-test/-main
+   :compiler-options {:optimizations :none}}
+   
+  :comprehensive-test
+  {:target :node-script
+   :output-to "target/comprehensive-test.js"
+   :main comprehensive-test/-main
    :compiler-options {:optimizations :none}}}}
