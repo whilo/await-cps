@@ -2,15 +2,24 @@
   (:require [riddley.walk :refer [macroexpand-all]]))
 
 (defn var-name [env sym]
-  (when-let [v (and (symbol? sym) (resolve env sym))]
-    (let [nm (:name (meta v))
-          nsp (.getName ^clojure.lang.Namespace (:ns (meta v)))]
-      (symbol (name nsp) (name nm)))))
+  (when (symbol? sym)
+    (if (:js-globals env)
+      ;; In ClojureScript, just use the symbol as-is if it's fully qualified
+      ;; or try to resolve it in the current namespace
+      (if (namespace sym)
+        sym
+        (symbol (str *ns*) (name sym)))
+      ;; In Clojure, use the existing resolution logic
+      (when-let [v (resolve env sym)]
+        (let [nm (:name (meta v))
+              nsp (.getName ^clojure.lang.Namespace (:ns (meta v)))]
+          (symbol (name nsp) (name nm)))))))
 
 (defn has-terminators?
  [form {:keys [terminators recur-target env] :as ctx}]
-  (let [sym (when (seq? form) (first form))]
-    (cond (contains? terminators (var-name env sym)) true
+  (let [sym (when (seq? form) (first form))
+        resolved-name (var-name env sym)]
+    (cond (contains? terminators resolved-name) true
           (and recur-target (= 'recur sym)) true
           (= 'loop* sym) (some #(has-terminators? % (dissoc ctx :recur-target)) (rest form))
           (coll? form) (some #(has-terminators? % ctx) form)
