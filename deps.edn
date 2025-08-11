@@ -1,5 +1,6 @@
 {:paths ["src"]
- :deps {riddley {:mvn/version "0.2.0"}}
+ :deps {riddley {:mvn/version "0.2.0"}
+        org.clojure/clojurescript {:mvn/version "1.11.60"}}
  :aliases
  {:test {:extra-paths ["test"]
          :extra-deps {org.clojure/test.check {:mvn/version "0.9.0"}
@@ -8,4 +9,8 @@
                       lambdaisland/kaocha {:mvn/version "1.0-612"}}
          :main-opts ["-m" "kaocha.runner"]}
   :readme {:extra-deps {clj-http {:mvn/version "3.10.0"}
-                        cheshire {:mvn/version "5.9.0"}}}}}
+                        cheshire {:mvn/version "5.9.0"}}}
+  :cljs {:extra-deps {thheller/shadow-cljs {:mvn/version "2.25.0"}}
+         :extra-paths ["test"]}
+  :fig {:extra-deps {com.bhauman/figwheel-main {:mvn/version "0.2.18"}}
+        :extra-paths ["test"]}}}

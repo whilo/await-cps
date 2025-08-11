@@ -1,0 +1,86 @@
+{:source-paths ["src" "test"]
+ :dependencies [[riddley "0.2.0"]]
+ :builds
+ {:test
+  {:target :node-test
+   :output-to "target/test.js"
+   :ns-regexp "await-cps.*-test$"
+   :compiler-options {:optimizations :none}}
+  
+  :macroexpansion-examples
+  {:target :node-script
+   :output-to "target/macroexpansion-examples.js"
+   :main macroexpansion-examples/init
+   :compiler-options {:optimizations :none}}
+
+  :async-await-test
+  {:target :node-script
+   :output-to "target/async-await-test.js"
+   :main test-cljs-async-await/init
+   :compiler-options {:optimizations :none}}
+
+  :debug-simple
+  {:target :node-script
+   :output-to "target/debug-simple.js"
+   :main debug-cljs-simple/-main
+   :compiler-options {:optimizations :none}}
+
+  :debug-explicit
+  {:target :node-script
+   :output-to "target/debug-explicit.js"
+   :main debug-explicit-qualification/-main
+   :compiler-options {:optimizations :none}}
+
+  :test-afn
+  {:target :node-script
+   :output-to "target/test-afn.js"
+   :main test-afn-cljs/-main
+   :compiler-options {:optimizations :none}}
+   
+  :test-async-await
+  {:target :node-script
+   :output-to "target/test-async-await.js"
+   :main test-async-await/-main
+   :compiler-options {:optimizations :none}}
+   
+  :simple-async-test
+  {:target :node-script
+   :output-to "target/simple-async-test.js"
+   :main simple-async-test/-main
+   :compiler-options {:optimizations :none}}
+   
+  :await-test
+  {:target :node-script
+   :output-to "target/await-test.js"
+   :main await-test/-main
+   :compiler-options {:optimizations :none}}
+   
+  :complex-async-test
+  {:target :node-script
+   :output-to "target/complex-async-test.js"
+   :main complex-async-test/-main
+   :compiler-options {:optimizations :none}}
+   
+  :let-await-test
+  {:target :node-script
+   :output-to "target/let-await-test.js"
+   :main let-await-test/-main
+   :compiler-options {:optimizations :none}}
+   
+  :promise-wrapper-test
+  {:target :node-script
+   :output-to "target/promise-wrapper-test.js"
+   :main promise-wrapper-test/-main
+   :compiler-options {:optimizations :none}}
+   
+  :test-afn-working
+  {:target :node-script
+   :output-to "target/test-afn-working.js"
+   :main test-afn-working/-main
+   :compiler-options {:optimizations :none}}
+   
+  :comprehensive-async-test
+  {:target :node-script
+   :output-to "target/comprehensive-async-test.js"
+   :main comprehensive-async-test/-main
+   :compiler-options {:optimizations :none}}}}

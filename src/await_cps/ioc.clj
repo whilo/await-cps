@@ -3,23 +3,46 @@
 
 (defn var-name [env sym]
   (when (symbol? sym)
-    (if (:js-globals env)
-      ;; In ClojureScript, just use the symbol as-is if it's fully qualified
-      ;; or try to resolve it in the current namespace
-      (if (namespace sym)
-        sym
-        (symbol (str *ns*) (name sym)))
-      ;; In Clojure, use the existing resolution logic
-      (when-let [v (resolve env sym)]
-        (let [nm (:name (meta v))
-              nsp (.getName ^clojure.lang.Namespace (:ns (meta v)))]
-          (symbol (name nsp) (name nm)))))))
+    ;; Don't qualify special forms or core symbols that shouldn't be qualified
+    (when-not (#{'quote 'var 'fn* 'def 'deftype* 'reify* 'clojure.core/import*
+                 'if 'case* 'let* 'letfn* 'do 'loop* 'recur 'try 'throw 'new '. 'set!
+                 'let} sym)
+      (if (:js-globals env)
+        ;; In ClojureScript, we need to check if this is a referred symbol
+        ;; Look in the environment's namespace info
+        (if (namespace sym)
+          sym
+          ;; For unqualified symbols, check if they're referred from another namespace
+          (let [ns-info (:ns env)
+                ns-name (:name ns-info)
+                uses (get ns-info :uses)
+                refers (get ns-info :refers)]
+            ;; Check if this symbol is referred from another namespace
+            (if-let [source-ns (get uses sym)]
+              ;; Found in uses - create qualified symbol with source namespace
+              (symbol (str source-ns) (name sym))
+              ;; Not found in uses, check refers or fall back to current namespace
+              (if-let [source-ns (get refers sym)]
+                (symbol (str source-ns) (name sym))
+                ;; Fall back to current namespace
+                (symbol (str ns-name) (name sym))))))
+        ;; In Clojure, use the existing resolution logic
+        (when-let [v (resolve env sym)]
+          (let [nm (:name (meta v))
+                nsp (.getName ^clojure.lang.Namespace (:ns (meta v)))]
+            (symbol (name nsp) (name nm))))))))
 
 (defn has-terminators?
  [form {:keys [terminators recur-target env] :as ctx}]
   (let [sym (when (seq? form) (first form))
-        resolved-name (var-name env sym)]
-    (cond (contains? terminators resolved-name) true
+        resolved-sym (var-name env sym)
+        has-term? (contains? terminators resolved-sym)]
+    (when (and (seq? form) (= 'await sym))
+      (println "DEBUG TERMINATORS: await form found:" form)
+      (println "  sym:" sym "resolved-sym:" resolved-sym)
+      (println "  terminators keys:" (keys terminators))
+      (println "  contains?" has-term?))
+    (cond has-term? true
           (and recur-target (= 'recur sym)) true
           (= 'loop* sym) (some #(has-terminators? % (dissoc ctx :recur-target)) (rest form))
           (coll? form) (some #(has-terminators? % ctx) form)
