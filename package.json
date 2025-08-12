@@ -1,0 +1,11 @@
+{
+  "name": "await-cps-benchmark",
+  "version": "1.0.0",
+  "devDependencies": {
+    "shadow-cljs": "^2.20.12"
+  },
+  "scripts": {
+    "build": "shadow-cljs compile fast-path-benchmark",
+    "test": "shadow-cljs compile fast-path-benchmark && node target/fast-path-benchmark.js"
+  }
+}
