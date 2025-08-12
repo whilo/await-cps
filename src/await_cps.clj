@@ -5,6 +5,19 @@
   (:refer-clojure :exclude [await bound-fn])
   (:require [await-cps.ioc :refer [invert]]))
 
+;; Fast-path optimization: Special value type for immediate values
+(deftype ImmediateValue [val])
+
+(defn immediate 
+  "Wrap an immediate value to signal no suspension is needed"
+  [v]
+  (ImmediateValue. v))
+
+(defn immediate? 
+  "Check if a value is an immediate value"
+  [v]
+  (instance? ImmediateValue v))
+
 (defn ^:no-doc bound-fn
   [f]
   (let [bound-frame (clojure.lang.Var/getThreadBindingFrame)]
@@ -18,43 +31,55 @@
 
 (defn ^:no-doc do-await
   [r e f & args]
-  (let [state (atom [:start])
-        resolve (fn [v] (let [[[before r']]
+  ;; Fast-path: Check if f is an ImmediateValue
+  (if (immediate? f)
+    (r (.val f))  ; Direct return without suspension
+    ;; Original CPS path
+    (let [state (atom [:start])
+          resolve (fn [v] (let [[[before r']]
+                                (swap-vals! state
+                                            #(case (first %)
+                                               :start [:resolved v]
+                                               :async [:completed]
+                                               %))]
+                            (when (= before :async) (r' v))))
+          raise (fn [t] (let [[[before _ e']]
                               (swap-vals! state
                                           #(case (first %)
-                                             :start [:resolved v]
+                                             :start [:raised t]
                                              :async [:completed]
                                              %))]
-                          (when (= before :async) (r' v))))
-        raise (fn [t] (let [[[before _ e']]
-                            (swap-vals! state
-                                        #(case (first %)
-                                           :start [:raised t]
-                                           :async [:completed]
-                                           %))]
-                        (when (= before :async) (e' t))))]
-    (apply f (concat args [resolve raise]))
-    (let [run (bound-fn trampoline)
-          safe-r #(try (r %) (catch Throwable t (e t)))
-          other-thread-r #(run safe-r %)
-          other-thread-e #(run e %)
-          [[before x]]
-          (swap-vals! state
-                      #(case (first %)
-                         :start [:async other-thread-r other-thread-e]
-                         :resolved [:completed]
-                         :raised [:completed]
-                         %))]
-      (case before
-        :resolved (partial safe-r x)
-        :raised (partial e x)
-        nil))))
+                          (when (= before :async) (e' t))))]
+      (apply f (concat args [resolve raise]))
+      (let [run (bound-fn trampoline)
+            safe-r #(try (r %) (catch Throwable t (e t)))
+            other-thread-r #(run safe-r %)
+            other-thread-e #(run e %)
+            [[before x]]
+            (swap-vals! state
+                        #(case (first %)
+                           :start [:async other-thread-r other-thread-e]
+                           :resolved [:completed]
+                           :raised [:completed]
+                           %))]
+        (case before
+          :resolved (partial safe-r x)
+          :raised (partial e x)
+          nil)))))
 
 (defn ^:no-doc run-async
   [f resolve raise]
-  (let [run (bound-fn trampoline)]
-    (run f resolve raise)
-    nil))
+  (let [run (bound-fn trampoline)
+        result (atom nil)
+        immediate-result (atom nil)
+        wrapped-resolve (fn [v]
+                          (if (immediate? v)
+                            (reset! immediate-result v)  ; Capture ImmediateValue
+                            (reset! result v))
+                          (resolve v))]
+    (run f wrapped-resolve raise)
+    ;; If we captured an ImmediateValue, return it instead of nil
+    (or @immediate-result nil)))
 
 (defn await
   "Awaits the asynchronous execution of continuation-passing style function

@@ -86,7 +86,7 @@
         all-ex (if (:js-globals env) :default `Throwable)]
     (cond
       (not (has-terminators? form ctx))
-      `(~r ~form)
+      `(~r (await-cps/immediate ~form))
 
       (and resolved (.isMacro resolved))
       (recur ctx (apply resolved form env tail))
@@ -300,8 +300,19 @@
       (contains? terminators (var-name env head))
       (let [handler (terminators (var-name env head))]
         (resolve-sequentially ctx (rest form)
-                              (fn [args] `(letfn [(safe-r# [v#] (try (~r v#) (catch ~all-ex t# (~e t#))))]
-                                            (~handler safe-r# ~e ~@args)))))
+                              (fn [args] 
+                                (if (= handler 'await-cps/do-await)
+                                  ;; Special handling for await: check for ImmediateValue
+                                  (let [first-arg (first args)]
+                                    `(letfn [(safe-r# [v#] (try (~r v#) (catch ~all-ex t# (~e t#))))]
+                                       (let [f# ~first-arg]
+                                         (if (await-cps/immediate? f#)
+                                           (safe-r# (.-val f#))  ; Fast path
+                                           ;; Slow path: treat as CPS function
+                                           (~handler safe-r# ~e f# ~@(rest args))))))  ; Slow path
+                                  ;; Original behavior for other terminators
+                                  `(letfn [(safe-r# [v#] (try (~r v#) (catch ~all-ex t# (~e t#))))]
+                                     (~handler safe-r# ~e ~@args))))))
 
       (seq? form)
       (resolve-sequentially ctx form (fn [form] `(~r ~(seq form))))
