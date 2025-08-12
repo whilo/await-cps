@@ -307,7 +307,7 @@
                                     `(letfn [(safe-r# [v#] (try (~r v#) (catch ~all-ex t# (~e t#))))]
                                        (let [f# ~first-arg]
                                          (if (await-cps/immediate? f#)
-                                           (safe-r# (.-val f#))  ; Fast path
+                                           (safe-r# (await-cps/unwrap-immediate f#))  ; Fast path
                                            ;; Slow path: treat as CPS function
                                            (~handler safe-r# ~e f# ~@(rest args))))))  ; Slow path
                                   ;; Original behavior for other terminators

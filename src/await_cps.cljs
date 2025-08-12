@@ -18,13 +18,18 @@
   [v]
   (instance? ImmediateValue v))
 
+(defn unwrap-immediate
+  "Unwrap the value from an ImmediateValue"
+  [^ImmediateValue v]
+  (.-val v))
+
 (def ^:no-doc bound-fn identity)
 
 (defn ^:no-doc do-await
   [r e f & args]
   ;; Fast-path: Check if f is an ImmediateValue
   (if (immediate? f)
-    (r (.-val f))  ; Direct return without suspension
+    (r (unwrap-immediate f))  ; Direct return without suspension
     ;; Original CPS path
     (let [state (atom [:start])
           resolve (fn [v] (let [[[before r']]

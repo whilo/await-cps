@@ -1,5 +1,5 @@
 (ns fast-path-benchmark
-  (:require [await-cps :refer [async await immediate immediate?]]))
+  (:require [await-cps :refer [async await immediate immediate? unwrap-immediate]]))
 
 (enable-console-print!)
 
@@ -56,12 +56,6 @@
       (println (str "Average time: " (.toFixed avg-time 4) "ms per operation"))
       avg-time)))
 
-;; Helper function to unwrap results for display
-(defn unwrap-result [r]
-  (if (immediate? r)
-    (.-val r)
-    r))
-
 ;; Benchmark functions
 (defn benchmark-immediate-chain []
   (let [result (atom nil)]
@@ -70,7 +64,7 @@
                       (let [f (nested-immediate 10)]
                         (f (fn [r] (reset! result r)) (fn [e] (throw e)))))
                     500000)
-    (println "Final result:" (unwrap-result @result))))
+    (println "Final result:" (unwrap-immediate @result))))
 
 (defn benchmark-slow-chain []
   (let [result (atom nil)]
@@ -79,7 +73,7 @@
                       (let [f (slow-chain 10)]
                         (f (fn [r] (reset! result r)) (fn [e] (throw e)))))
                     500000)
-    (println "Final result:" (unwrap-result @result))))
+    (println "Final result:" (unwrap-immediate @result))))
 
 (defn benchmark-deep-chain []
   (let [result (atom nil)]
@@ -89,9 +83,9 @@
                         (f (fn [r] (reset! result r)) (fn [e] (throw e)))))
                     50000)
     (let [raw-result @result
-          unwrapped (unwrap-result raw-result)]
+          unwrapped (unwrap-immediate raw-result)]
       (println "Final result (raw):" raw-result)
-      (println "Final result (.val):" (when (immediate? raw-result) (.-val raw-result)))
+      (println "Final result (.val):" (when (immediate? raw-result) (unwrap-immediate raw-result)))
       (println "Final result (unwrapped):" unwrapped)
       (println "Expected result should be 11 (1 + 10)"))))
 
@@ -174,7 +168,7 @@
         (println (str "Complex computation overhead ratio: " (.toFixed (/ async-avg sync-avg) 2) "x"))
         (println "Complex result check - should be same:")
         (println "  Sync result:" (complex-computation-sync test-data))
-        (println "  Fast-path result:" (unwrap-result @result))))))
+        (println "  Fast-path result:" (unwrap-immediate @result))))))
 
 ;; Test ImmediateValue detection
 (defn test-immediate-detection []
@@ -204,8 +198,8 @@
                                        (f (fn [r] (reset! result2 r)) (fn [e] (throw e)))))
                                    1250000)]
       (println (str "Slow-path overhead vs fast-path: " (.toFixed (/ slow-avg fast-avg) 1) "x slower"))
-      (println "Fast-path result:" (unwrap-result @result1))
-      (println "Slow-path result:" (unwrap-result @result2)))))
+      (println "Fast-path result:" (unwrap-immediate @result1))
+      (println "Slow-path result:" (unwrap-immediate @result2)))))
 
 ;; Run all benchmarks
 (defn run-all-benchmarks []
