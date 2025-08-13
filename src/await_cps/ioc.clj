@@ -61,8 +61,8 @@
         `(let [~@sync-bindings]
            (letfn [(~cont [~async-binding]
                      ~(resolve-sequentially
-                        (dissoc ctx :sync-recur?) others
-                        #(then `[~@(map first syncs) ~async-binding ~@%])))]
+                       (dissoc ctx :sync-recur?) others
+                       #(then `[~@(map first syncs) ~async-binding ~@%])))]
              ~(invert (assoc ctx :r cont) asn))))
       (then coll))))
 
@@ -210,6 +210,7 @@
           form
 
           recur-target
+          ;; Activate trampoline by wrapping in a fn
           (resolve-sequentially ctx tail (fn [args] `(fn [] (~recur-target ~@args))))
 
           :else (throw (ex-info "Can't recur outside loop" {:form form})))
@@ -363,14 +364,28 @@
         (throw (ex-info (str "Unsupported special symbol [" head "]")
                         {:unknown-special-form head :form form})))
 
+      ;; Invoke termination handler, e.g. do-await
       (contains? terminators (var-name env head))
       (let [handler (terminators (var-name env head))]
         (resolve-sequentially ctx (rest form)
                               (fn [args]
-                                ;; Unified handling: all terminators use CPS
-                                `(letfn [(safe-r# [v#] (try (~r v#) (catch ~all-ex t# (~e t#))))]
-                                   (~handler safe-r# ~e ~@args)))))
+                                (if (= 1 (count args))
+                                  ;; Single argument case - check if it's immediate
+                                  `(let [arg# ~(first args)]
+                                     (if (await-cps/immediate? arg#)
+                                       ;; Fast path: immediate value - bypass handler entirely
+                                       (fn []
+                                         (try
+                                           (~r (await-cps/unwrap-immediate arg#))
+                                           (catch ~all-ex t# (~e t#))))
+                                       ;; Slow path: call handler with trampoline to prevent stack overflow
+                                       (letfn [(safe-r# [v#] (try (~r v#) (catch ~all-ex t# (~e t#))))]
+                                         (fn [] (~handler safe-r# ~e arg#)))))
+                                  ;; Multiple arguments - always use handler with trampoline
+                                  `(letfn [(safe-r# [v#] (try (~r v#) (catch ~all-ex t# (~e t#))))]
+                                     (fn [] (~handler safe-r# ~e ~@args)))))))
 
+      ;; TODO this should actually be last, vector is seq?
       (seq? form)
       (resolve-sequentially ctx form (fn [form] `(~r ~(seq form))))
 
@@ -402,4 +417,4 @@
   (let [r (gensym) e (gensym)
         params {:r r :e e :env &env :terminators terms}
         expanded (macroexpand-all (cons 'do body))]
-    `(fn [~r ~e] ~(invert params expanded))))
+    `(fn [~r ~e] (fn [] ~(invert params expanded)))))

@@ -1,6 +1,18 @@
 {:source-paths ["src" "test" "test-clojure" "."]
  :dependencies [[riddley "0.2.0"]]
- :builds {:fast-path-benchmark
+ :builds {:test-immediate-optimization
+          {:target :node-script
+           :main test-immediate-optimization/-main
+           :output-to "target/test-immediate-optimization.js"}
+          :simple-immediate-test
+          {:target :node-script
+           :main simple-immediate-test/-main
+           :output-to "target/simple-immediate-test.js"}
+          :immediate-performance-test
+          {:target :node-script
+           :main immediate-performance-test/-main
+           :output-to "target/immediate-performance-test.js"}
+          :fast-path-benchmark
           {:target :node-script
            :main fast-path-benchmark/-main
            :output-to "target/fast-path-benchmark.js"}
@@ -63,4 +75,8 @@
           :test-blocking-investigation
           {:target :node-script
            :main test-blocking-investigation/-main
-           :output-to "target/test-blocking-investigation.js"}}}
+           :output-to "target/test-blocking-investigation.js"}
+          :comprehensive-correctness
+          {:target :node-script
+           :main comprehensive-correctness/-main
+           :output-to "target/comprehensive-correctness.js"}}}

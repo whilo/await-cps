@@ -5,15 +5,31 @@
   (:refer-clojure :exclude [await bound-fn])
   (:require-macros await-cps))
 
-;; Unified callback approach: No need for ImmediateValue wrapper
-;; All async functions return CPS functions that decide at call time
-;; whether to invoke callbacks synchronously or asynchronously
+;; Immediate value optimization: Functions can return immediate values
+;; for synchronous operations to bypass CPS machinery
+
+(deftype ImmediateValue [val])
+
+(defn immediate 
+  "Wrap a value as immediately available"
+  [v] 
+  (ImmediateValue. v))
+
+(defn immediate? 
+  "Check if value is immediately available"
+  [v] 
+  (instance? ImmediateValue v))
+
+(defn unwrap-immediate 
+  "Extract value from immediate wrapper"
+  [^ImmediateValue v] 
+  (.-val v))
 
 (def ^:no-doc bound-fn identity)
 
 (defn ^:no-doc do-await
   [r e f & args]
-  ;; Unified approach: f is always a CPS function
+  ;; f should be a CPS function since IOC handles immediate values
   ;; Fast path is when f calls the callback synchronously (same execution tick)
   ;; Slow path is when f calls the callback asynchronously (different execution tick)
   (let [state (atom [:start])
@@ -31,7 +47,9 @@
                                            :async [:completed]
                                            %))]
                         (when (= before :async) (e' t))))]
-    (apply f (concat args [resolve raise]))
+    (let [return-val (apply f (concat args [resolve raise]))]
+      (when (immediate? return-val)
+        (println "WARNING: CPS function returned immediate value instead of calling callbacks")))
     (let [run (bound-fn trampoline)
           safe-r #(try (r %) (catch :default t (e t)))
           other-thread-r #(run safe-r %)
@@ -44,8 +62,8 @@
                          :raised [:completed]
                          %))]
       (case before
-        :resolved (partial safe-r x)  ; Fast path: callback was called synchronously
-        :raised (partial e x)         ; Fast path: error thrown synchronously  
+        :resolved (fn [] (safe-r x))  ; Fast path: callback was called synchronously, trampolined
+        :raised (fn [] (e x))         ; Fast path: error thrown synchronously, trampolined  
         nil))))                       ; Slow path: suspended to async
 
 (defn ^:no-doc run-async
