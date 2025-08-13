@@ -6,7 +6,13 @@
   (:require-macros await-cps))
 
 ;; Fast-path optimization: Special value type for immediate values
-(deftype ImmediateValue [val])
+(deftype ImmediateValue [val]
+  Object
+  (toString [this] (str "#<ImmediateValue " (pr-str val) ">"))
+  
+  IPrintWithWriter
+  (-pr-writer [this writer opts]
+    (-write writer (str "#<ImmediateValue " (pr-str val) ">"))))
 
 (defn immediate 
   "Wrap an immediate value to signal no suspension is needed"
@@ -22,6 +28,13 @@
   "Unwrap the value from an ImmediateValue"
   [^ImmediateValue v]
   (.-val v))
+
+(defn maybe-unwrap-immediate
+  "Unwrap the value from an ImmediateValue"
+  [v]
+  (if (immediate? v)
+    (.-val ^ImmediateValue v)
+    v))
 
 (def ^:no-doc bound-fn identity)
 
@@ -65,20 +78,11 @@
 
 (defn ^:no-doc run-async
   [f resolve raise]
-  (let [run (bound-fn trampoline)
-        result (atom nil)
-        immediate-result (atom nil)
-        wrapped-resolve (fn [v]
-                          (if (immediate? v)
-                            (reset! immediate-result v)  ; Capture ImmediateValue
-                            (reset! result v))
-                          (resolve v))]
+  (let [run (bound-fn trampoline)]
     (try
-      (run f wrapped-resolve raise)
+      (run f resolve raise)
       (catch :default e
-        (raise e)))
-    ;; If we captured an ImmediateValue, return it instead of nil
-    (or @immediate-result nil)))
+        (raise e)))))
 
 (defn await
   "Awaits the asynchronous execution of continuation-passing style function

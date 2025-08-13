@@ -1,5 +1,6 @@
 (ns fast-path-benchmark
-  (:require [await-cps :refer [async await immediate immediate? unwrap-immediate]]))
+  (:require [await-cps :refer [immediate immediate? unwrap-immediate await]])
+  (:require-macros [await-cps :refer [async]]))
 
 (enable-console-print!)
 
@@ -18,30 +19,27 @@
 
 ;; 3. Nested immediate values (should propagate fast path)
 (defn nested-immediate [x]
-  (fn [resolve raise]
-    (async resolve raise
-           (let [a (await (immediate-fn x))      ; x * 2
-                 b (await (immediate-fn a))      ; (x * 2) * 2 = x * 4
-                 c (await (immediate-fn b))]     ; (x * 4) * 2 = x * 8
-             (* c 2)))))                        ; (x * 8) * 2 = x * 16
+  (async
+    (let [a (await (immediate-fn x))      ; x * 2
+          b (await (immediate-fn a))      ; (x * 2) * 2 = x * 4
+          c (await (immediate-fn b))]     ; (x * 4) * 2 = x * 8
+      (* c 2))))                        ; (x * 8) * 2 = x * 16
 
 ;; 4. Same computation using slow CPS functions
 (defn slow-chain [x]
-  (fn [resolve raise]
-    (async resolve raise
-           (let [a (await (slow-fn x))           ; x * 2
-                 b (await (slow-fn a))           ; (x * 2) * 2 = x * 4  
-                 c (await (slow-fn b))]          ; (x * 4) * 2 = x * 8
-             (* c 2)))))
+  (async
+    (let [a (await (slow-fn x))           ; x * 2
+          b (await (slow-fn a))           ; (x * 2) * 2 = x * 4  
+          c (await (slow-fn b))]          ; (x * 4) * 2 = x * 8
+      (* c 2))))
 
 ;; 5. Deep nesting of immediate values - FIXED RECURSIVE VERSION
 (defn deep-immediate-chain [x depth]
-  (fn [resolve raise]
-    (async resolve raise
-           (if (zero? depth)
-             x
-             (let [result (await (deep-immediate-chain x (dec depth)))]
-               (+ result 1))))))
+  (async
+    (if (zero? depth)
+      x
+      (let [result (await (deep-immediate-chain x (dec depth)))]
+        (+ result 1)))))
 
 ;; Simple timing function
 (defn time-operation [name operation iterations]
@@ -62,7 +60,9 @@
     (time-operation "Immediate Value Chain (FAST PATH)" 
                     (fn []
                       (let [f (nested-immediate 10)]
-                        (f (fn [r] (reset! result r)) (fn [e] (throw e)))))
+                        (if (immediate? f)
+                          (reset! result f)
+                          (f (fn [r] (reset! result r)) (fn [e] (throw e))))))
                     500000)
     (println "Final result:" (unwrap-immediate @result))))
 
@@ -71,7 +71,9 @@
     (time-operation "Regular CPS Chain (SLOW PATH)"
                     (fn []
                       (let [f (slow-chain 10)]
-                        (f (fn [r] (reset! result r)) (fn [e] (throw e)))))
+                        (if (immediate? f)
+                          (reset! result f)
+                          (f (fn [r] (reset! result r)) (fn [e] (throw e))))))
                     500000)
     (println "Final result:" (unwrap-immediate @result))))
 
@@ -80,7 +82,9 @@
     (time-operation "Deep Immediate Chain - depth=10 (FAST PATH)"
                     (fn []
                       (let [f (deep-immediate-chain 1 10)]
-                        (f (fn [r] (reset! result r)) (fn [e] (throw e)))))
+                        (if (immediate? f)
+                          (reset! result f)
+                          (f (fn [r] (reset! result r)) (fn [e] (throw e))))))
                     50000)
     (let [raw-result @result
           unwrapped (unwrap-immediate raw-result)]
@@ -94,9 +98,8 @@
   (reduce + (map #(* % %) (range n))))
 
 (defn async-computation-immediate [n]
-  (fn [resolve raise]
-    (async resolve raise
-           (reduce + (map #(* % %) (range n))))))
+  (async
+    (reduce + (map #(* % %) (range n)))))
 
 ;; Complex computation: nested loops with data structures and control flow
 (defn complex-computation-sync [data]
@@ -117,23 +120,22 @@
     @result))
 
 (defn complex-computation-async [data]
-  (fn [resolve raise]
-    (async resolve raise
-           (let [matrix (partition 10 data)
-                 lookup-table (zipmap (range 100) (map #(* % 3) (range 100)))
-                 result (atom 0)]
-             (doseq [row matrix]
-               (let [row-sum (atom 0)]
-                 (doseq [val row]
-                   (let [transformed (get lookup-table (mod val 100) val)]
-                     (when (even? transformed)
-                       (swap! row-sum + transformed)
-                       (when (> @row-sum 1000)
-                         (swap! result + (quot @row-sum 2))
-                         (reset! row-sum 0)))))
-                 (when (> @row-sum 0)
-                   (swap! result + @row-sum))))
-             @result))))
+  (async
+    (let [matrix (partition 10 data)
+          lookup-table (zipmap (range 100) (map #(* % 3) (range 100)))
+          result (atom 0)]
+      (doseq [row matrix]
+        (let [row-sum (atom 0)]
+          (doseq [val row]
+            (let [transformed (get lookup-table (mod val 100) val)]
+              (when (even? transformed)
+                (swap! row-sum + transformed)
+                (when (> @row-sum 1000)
+                  (swap! result + (quot @row-sum 2))
+                  (reset! row-sum 0)))))
+          (when (> @row-sum 0)
+            (swap! result + @row-sum))))
+      @result)))
 
 (defn benchmark-sync-vs-fastpath []
   (println "\n--- Sync vs Fast-Path Async Comparison (n=1000) ---")
@@ -146,7 +148,9 @@
           async-avg (time-operation "Fast-path async computation"
                                     (fn []
                                       (let [f (async-computation-immediate 1000)]
-                                        (f (fn [r] (reset! result r)) (fn [e] (throw e)))))
+                                        (if (immediate? f)
+                                          (reset! result f)
+                                          (f (fn [r] (reset! result r)) (fn [e] (throw e))))))
                                     250000)]
       (println (str "Fast-path overhead ratio: " (.toFixed (/ async-avg sync-avg) 2) "x")))))
 
@@ -163,7 +167,9 @@
             async-avg (time-operation "Complex fast-path async computation"
                                       (fn []
                                         (let [f (complex-computation-async test-data)]
-                                          (f (fn [r] (reset! result r)) (fn [e] (throw e)))))
+                                          (if (immediate? f)
+                                            (reset! result f)
+                                            (f (fn [r] (reset! result r)) (fn [e] (throw e))))))
                                       10000)]
         (println (str "Complex computation overhead ratio: " (.toFixed (/ async-avg sync-avg) 2) "x"))
         (println "Complex result check - should be same:")
@@ -178,7 +184,7 @@
     (println "immediate 42:" imm)
     (println "immediate? immediate 42:" (immediate? imm))
     (println "immediate? regular function:" (immediate? regular-fn))
-    (println ".val of immediate:" (.-val imm))))
+    (println ".val of immediate:" (unwrap-immediate imm))))
 
 ;; Direct fast vs slow path comparison
 (defn benchmark-fast-vs-slow-path []
@@ -188,14 +194,18 @@
         fast-avg (time-operation "Fast-path (immediate values)"
                                  (fn []
                                    (let [f (nested-immediate 10)]
-                                     (f (fn [r] (reset! result1 r)) (fn [e] (throw e)))))
+                                     (if (immediate? f)
+                                       (reset! result1 f)
+                                       (f (fn [r] (reset! result1 r)) (fn [e] (throw e))))))
                                  1250000)]
     
     (let [result2 (atom nil)
           slow-avg (time-operation "Slow-path (regular CPS)"
                                    (fn []
                                      (let [f (slow-chain 10)]
-                                       (f (fn [r] (reset! result2 r)) (fn [e] (throw e)))))
+                                       (if (immediate? f)
+                                         (reset! result2 f)
+                                         (f (fn [r] (reset! result2 r)) (fn [e] (throw e))))))
                                    1250000)]
       (println (str "Slow-path overhead vs fast-path: " (.toFixed (/ slow-avg fast-avg) 1) "x slower"))
       (println "Fast-path result:" (unwrap-immediate @result1))

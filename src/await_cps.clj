@@ -3,10 +3,16 @@
    callback in the last two arguments, a pattern known as continuation-passing
    style (CPS) and popularised by Ring and clj-http."
   (:refer-clojure :exclude [await bound-fn])
-  (:require [await-cps.ioc :refer [invert]]))
+  (:require [await-cps.ioc :refer [invert has-terminators? coroutine]]))
 
 ;; Fast-path optimization: Special value type for immediate values
-(deftype ImmediateValue [val])
+(deftype ImmediateValue [val]
+  Object
+  (toString [this] (str "#<ImmediateValue " (pr-str val) ">"))
+  
+  clojure.lang.IObj
+  (withMeta [this meta] this) ; ImmediateValue doesn't support metadata
+  (meta [this] nil))
 
 (defn immediate 
   "Wrap an immediate value to signal no suspension is needed"
@@ -17,6 +23,18 @@
   "Check if a value is an immediate value"
   [v]
   (instance? ImmediateValue v))
+
+(defn unwrap-immediate
+  "Unwrap the value from an ImmediateValue"
+  [^ImmediateValue v]
+  (.-val v))
+
+(defn maybe-unwrap-immediate
+  "Potentially unwrap the value from an ImmediateValue"
+  [v]
+  (if (immediate? v)
+    (.-val ^ImmediateValue v)
+    v))
 
 (defn ^:no-doc bound-fn
   [f]
@@ -69,17 +87,8 @@
 
 (defn ^:no-doc run-async
   [f resolve raise]
-  (let [run (bound-fn trampoline)
-        result (atom nil)
-        immediate-result (atom nil)
-        wrapped-resolve (fn [v]
-                          (if (immediate? v)
-                            (reset! immediate-result v)  ; Capture ImmediateValue
-                            (reset! result v))
-                          (resolve v))]
-    (run f wrapped-resolve raise)
-    ;; If we captured an ImmediateValue, return it instead of nil
-    (or @immediate-result nil)))
+  (let [run (bound-fn trampoline)]
+    (run f resolve raise)))
 
 (defn await
   "Awaits the asynchronous execution of continuation-passing style function
@@ -103,17 +112,18 @@
 (def ^:private cljs? (boolean (find-ns 'cljs.analyzer)))
 
 (defmacro async
-  "Like ((afn [] body*) resolve raise)."
-  [resolve raise & body]
-  (let [r (gensym)
-        e (gensym)]
-    `(letfn [(inverted# [~r ~e]
-               ~(invert {:r r :e e
-                         :terminators terminators
-                         :env &env
-                         :all-ex (if cljs? :default `Throwable)}
-                        `(do ~@body)))]
-       (run-async inverted# ~resolve ~raise))))
+  "Returns a callback that await can consume directly.
+   If body contains no await calls, returns an ImmediateValue.
+   If body contains await calls, returns a CPS function."
+  [& body]
+  (let [ctx {:terminators terminators
+             :env &env}
+        has-await? (has-terminators? `(do ~@body) ctx)]
+    (if has-await?
+      ;; Slow path: invoke CPS function - use the original coroutine approach
+      `(fn [r# e#] (run-async (coroutine ~terminators ~@body) r# e#))
+      ;; Fast path: return immediate value
+      `(immediate (do ~@body)))))
 
 (defmacro afn
   "Defines an asynchronous function. Declared arguments are extended with two

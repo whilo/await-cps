@@ -3,4 +3,20 @@
  :builds {:fast-path-benchmark
           {:target :node-script
            :main fast-path-benchmark/-main
-           :output-to "target/fast-path-benchmark.js"}}}
+           :output-to "target/fast-path-benchmark.js"}
+          :debug-slow-path
+          {:target :node-script
+           :main debug-slow-path/test-slow-chain
+           :output-to "target/debug-slow-path.js"}
+          :debug-slow-path2
+          {:target :node-script
+           :main debug-slow-path2/test-single-await
+           :output-to "target/debug-slow-path2.js"}
+          :debug-coroutine
+          {:target :node-script
+           :main debug-coroutine/test-coroutine
+           :output-to "target/debug-coroutine.js"}
+          :debug-do-await
+          {:target :node-script
+           :main debug-do-await/test-fn
+           :output-to "target/debug-do-await.js"}}}

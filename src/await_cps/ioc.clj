@@ -86,7 +86,10 @@
         all-ex (if (:js-globals env) :default `Throwable)]
     (cond
       (not (has-terminators? form ctx))
-      `(~r (await-cps/immediate ~form))
+      `(let [result# ~form]
+         (~r (if (await-cps/immediate? result#)
+               result#
+               (await-cps/immediate result#))))
 
       (and resolved (.isMacro resolved))
       (recur ctx (apply resolved form env tail))
