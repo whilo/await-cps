@@ -44,6 +44,22 @@
           {:target :node-script
            :main test-dotimes/-main
            :output-to "target/test-dotimes.js"}
+          :test-dotimes-stackoverflow
+          {:target :node-script
+           :main test-dotimes-stackoverflow-test/-main
+           :output-to "target/test-dotimes-stackoverflow.js"}
+          :test-loop-recur-direct
+          {:target :node-script
+           :main test-loop-recur-direct-test/-main
+           :output-to "target/test-loop-recur-direct.js"}
+          :test-moderate-iterations
+          {:target :node-script
+           :main test-moderate-iterations-simple/-main
+           :output-to "target/test-moderate-iterations.js"}
+          :test-small-iterations
+          {:target :node-script
+           :main test-small-iterations/-main
+           :output-to "target/test-small-iterations.js"}
           :test-blocking-investigation
           {:target :node-script
            :main test-blocking-investigation/-main

@@ -1,5 +1,5 @@
 (ns ^:no-doc await-cps.ioc
-  (:require [riddley.walk :refer [macroexpand-all walk-exprs]]
+  (:require [riddley.walk :refer [macroexpand-all]]
             [clojure.pprint]))
 
 (defn var-name [env sym]
@@ -137,27 +137,26 @@
                ~(invert updated-ctx `(do ~@(rest tail))))))
 
         let*
-        (do
-          (let [bindings-vec (first tail)
-                bindings-pairs (partition 2 bindings-vec)
-                [syncs [[sym asn] & others]] (split-with #(not (has-terminators? (second %) ctx)) bindings-pairs)
-                cont (gensym "cont")
-                updated-ctx (add-env-syms ctx (map first syncs))
-                generated-form (if asn
-                                 ;; We have an async binding
-                                 `(let* [~@(mapcat identity syncs)]
-                                        (letfn [(~cont [async-value#]
-                                                  (let* [~sym async-value#]
-                                                        ~(invert (add-env-syms (dissoc updated-ctx :sync-recur?) [sym])
-                                                                 (if (seq others)
-                                                                   `(let* [~@(mapcat identity others)]
-                                                                          ~@(rest tail))
-                                                                   `(do ~@(rest tail))))))]
-                                          ~(invert (assoc updated-ctx :r cont) asn)))
-                                 ;; No async bindings
-                                 `(let* [~@(mapcat identity syncs)]
-                                        ~(invert updated-ctx `(do ~@(rest tail)))))]
-            generated-form))
+        (let [bindings-vec (first tail)
+              bindings-pairs (partition 2 bindings-vec)
+              [syncs [[sym asn] & others]] (split-with #(not (has-terminators? (second %) ctx)) bindings-pairs)
+              cont (gensym "cont")
+              updated-ctx (add-env-syms ctx (map first syncs))
+              generated-form (if asn
+                               ;; We have an async binding
+                               `(let* [~@(mapcat identity syncs)]
+                                      (letfn [(~cont [async-value#]
+                                                (let* [~sym async-value#]
+                                                      ~(invert (add-env-syms (dissoc updated-ctx :sync-recur?) [sym])
+                                                               (if (seq others)
+                                                                 `(let* [~@(mapcat identity others)]
+                                                                        ~@(rest tail))
+                                                                 `(do ~@(rest tail))))))]
+                                        ~(invert (assoc updated-ctx :r cont) asn)))
+                               ;; No async bindings
+                               `(let* [~@(mapcat identity syncs)]
+                                      ~(invert updated-ctx `(do ~@(rest tail)))))]
+          generated-form)
 
         letfn
         ;; Handle ClojureScript letfn forms that don't expand to letfn*
@@ -182,30 +181,8 @@
                     (invert ctx asn)))
             `(~r ~form)))
 
-        loop
         ;; Handle ClojureScript loop forms that don't expand to loop*
-        (let [[binds & body] tail
-              bind-names (->> binds (partition 2) (map first))]
-          (cond
-            (has-terminators? binds ctx)
-            (invert ctx `(let [~@binds]
-                           (loop [~@(interleave bind-names bind-names)]
-                             ~@body)))
-
-            (has-terminators? body (dissoc ctx :recur-target))
-            (let [recur-target (gensym "recur")
-                  updated-ctx (add-env-syms ctx bind-names)]
-              `(letfn [(~recur-target [~@bind-names]
-                         (loop [~@(interleave bind-names bind-names)]
-                           ~(invert (assoc updated-ctx
-                                           :sync-recur? true
-                                           :recur-target recur-target)
-                                    `(do ~@body))))]
-                 (let [~@binds] (~recur-target ~@bind-names))))
-
-            :else `(~r ~form)))
-
-        loop*
+        (loop loop*)
         (let [[binds & body] tail
               bind-names (->> binds (partition 2) (map first))]
           (cond
@@ -233,7 +210,7 @@
           form
 
           recur-target
-          (resolve-sequentially ctx tail (fn [args] `(~recur-target ~@args)))
+          (resolve-sequentially ctx tail (fn [args] `(fn [] (~recur-target ~@args))))
 
           :else (throw (ex-info "Can't recur outside loop" {:form form})))
 
