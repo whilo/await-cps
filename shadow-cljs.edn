@@ -1,4 +1,4 @@
-{:source-paths ["src" "."]
+{:source-paths ["src" "test" "test-clojure" "."]
  :dependencies [[riddley "0.2.0"]]
  :builds {:fast-path-benchmark
           {:target :node-script
@@ -19,4 +19,32 @@
           :debug-do-await
           {:target :node-script
            :main debug-do-await/test-fn
-           :output-to "target/debug-do-await.js"}}}
+           :output-to "target/debug-do-await.js"}
+          :simple-when-let
+          {:target :node-script
+           :main simple-when-let/-main
+           :output-to "target/simple-when-let.js"}
+          :simple-if-let
+          {:target :node-script
+           :main simple-if-let/-main
+           :output-to "target/simple-if-let.js"}
+          :simple-when-some
+          {:target :node-script
+           :main simple-when-some/-main
+           :output-to "target/simple-when-some.js"}
+          :debug-when-some
+          {:target :node-script
+           :main debug-when-some/-main
+           :output-to "target/debug-when-some.js"}
+          :unified-benchmark
+          {:target :node-script
+           :main unified-benchmark/-main
+           :output-to "target/unified-benchmark.js"}
+          :test-dotimes
+          {:target :node-script
+           :main test-dotimes/-main
+           :output-to "target/test-dotimes.js"}
+          :test-blocking-investigation
+          {:target :node-script
+           :main test-blocking-investigation/-main
+           :output-to "target/test-blocking-investigation.js"}}}

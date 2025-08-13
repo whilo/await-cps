@@ -1,5 +1,5 @@
 (ns ^:no-doc await-cps.ioc
-  (:require [riddley.walk :refer [macroexpand-all]]
+  (:require [riddley.walk :refer [macroexpand-all walk-exprs]]
             [clojure.pprint]))
 
 (defn var-name [env sym]
@@ -86,15 +86,12 @@
         all-ex (if (:js-globals env) :default `Throwable)]
     (cond
       (not (has-terminators? form ctx))
-      `(let [result# ~form]
-         (~r (if (await-cps/immediate? result#)
-               result#
-               (await-cps/immediate result#))))
+      `(~r ~form)
 
       (and resolved (.isMacro resolved))
       (recur ctx (apply resolved form env tail))
 
-      (or (special-symbol? head) (= head 'let) (= head 'letfn) (= head 'loop) (= head 'fn))
+      (or (special-symbol? head) (= head 'let) (= head 'letfn) (= head 'loop) (= head 'fn) (= head 'when-let) (= head 'if-let) (= head 'when-some) (= head 'dotimes))
       (case head
 
         (quote var fn* fn def deftype* reify* clojure.core/import*)
@@ -106,8 +103,8 @@
           (if (has-terminators? con ctx)
             (let [ctx' (dissoc ctx :sync-recur?)]
               `(letfn [(~cont [con#] (if con# ~(invert ctx' left)
-                                              ~(invert ctx' right)
-                                              ~@unexpected-others))]
+                                         ~(invert ctx' right)
+                                         ~@unexpected-others))]
                  ~(invert (assoc ctx :r cont) con)))
             `(if ~con ~(invert ctx left) ~(invert ctx right))))
 
@@ -149,18 +146,17 @@
                 generated-form (if asn
                                  ;; We have an async binding
                                  `(let* [~@(mapcat identity syncs)]
-                                    (letfn [(~cont [async-value#]
-                                              (let* [~sym async-value#]
-                                                ~(invert (add-env-syms (dissoc updated-ctx :sync-recur?) [sym])
-                                                         (if (seq others)
-                                                           `(let* [~@(mapcat identity others)]
-                                                              ~@(rest tail))
-                                                           `(do ~@(rest tail))))))]
-                                      ~(invert (assoc updated-ctx :r cont) asn)))
+                                        (letfn [(~cont [async-value#]
+                                                  (let* [~sym async-value#]
+                                                        ~(invert (add-env-syms (dissoc updated-ctx :sync-recur?) [sym])
+                                                                 (if (seq others)
+                                                                   `(let* [~@(mapcat identity others)]
+                                                                          ~@(rest tail))
+                                                                   `(do ~@(rest tail))))))]
+                                          ~(invert (assoc updated-ctx :r cont) asn)))
                                  ;; No async bindings
                                  `(let* [~@(mapcat identity syncs)]
-                                    ~(invert updated-ctx `(do ~@(rest tail)))))
-                ]
+                                        ~(invert updated-ctx `(do ~@(rest tail)))))]
             generated-form))
 
         letfn
@@ -202,8 +198,8 @@
               `(letfn [(~recur-target [~@bind-names]
                          (loop [~@(interleave bind-names bind-names)]
                            ~(invert (assoc updated-ctx
-                                      :sync-recur? true
-                                      :recur-target recur-target)
+                                           :sync-recur? true
+                                           :recur-target recur-target)
                                     `(do ~@body))))]
                  (let [~@binds] (~recur-target ~@bind-names))))
 
@@ -224,8 +220,8 @@
               `(letfn [(~recur-target [~@bind-names]
                          (loop [~@(interleave bind-names bind-names)]
                            ~(invert (assoc updated-ctx
-                                      :sync-recur? true
-                                      :recur-target recur-target)
+                                           :sync-recur? true
+                                           :recur-target recur-target)
                                     `(do ~@body))))]
                  (let [~@binds] (~recur-target ~@bind-names))))
 
@@ -240,6 +236,20 @@
           (resolve-sequentially ctx tail (fn [args] `(~recur-target ~@args)))
 
           :else (throw (ex-info "Can't recur outside loop" {:form form})))
+
+        dotimes
+        (let [[binds & body] tail
+              [sym init-form] binds]
+          (if (has-terminators? body ctx)
+            ;; Convert dotimes to loop when it contains await
+            (invert ctx `(let [max# ~init-form]
+                           (loop [~sym 0]
+                             (when (< ~sym max#)
+                               ~@body
+                               (recur (inc ~sym))))))
+            ;; No await in body, pass through unchanged
+            `(~r ~form)))
+
 
         try
         (let [catch-or-finally? #(and (seq? %) (#{'catch 'finally} (first %)))
@@ -262,8 +272,8 @@
                        (try (throw t#)
                             ~@(map (fn [[sym cls bnd & body]]
                                      `(~sym ~cls ~bnd
-                                        ~(invert (assoc (add-env-syms ctx [bnd]) :r fin :e fin-throw)
-                                                 `(do ~@body))))
+                                            ~(invert (assoc (add-env-syms ctx [bnd]) :r fin :e fin-throw)
+                                                     `(do ~@body))))
                                    catches))
                        (catch ~all-ex t# (~fin-do nil t#))))]
              (try ~(invert (assoc ctx :r fin :e cat) `(do ~@body))
@@ -297,25 +307,92 @@
             (resolve-sequentially ctx args
                                   (fn [args] `(~r (set! ~subject ~@args))))))
 
+        when-let
+        (let [[binds & body] tail]
+          (if (and (vector? binds) (= (count binds) 2))
+            (let [[sym test] binds]
+              (if (has-terminators? test ctx)
+                ;; Test expression contains await
+                (let [cont (gensym "cont")]
+                  `(letfn [(~cont [test-result#]
+                             (if test-result#
+                               (let [~sym test-result#]
+                                 ~(invert (add-env-syms ctx [sym]) `(do ~@body)))
+                               (~r nil)))]
+                     ~(invert (assoc ctx :r cont) test)))
+                ;; Test expression doesn't contain await, check body
+                (if (has-terminators? body ctx)
+                  ;; Body contains await but test doesn't  
+                  `(when-let [~sym ~test]
+                     ~(invert (add-env-syms ctx [sym]) `(do ~@body)))
+                  ;; No await in when-let, pass through unchanged
+                  `(~r ~form))))
+            ;; Invalid binding form, pass through
+            `(~r ~form)))
+
+        if-let
+        (let [[binds & body] tail]
+          (if (and (vector? binds) (= (count binds) 2))
+            (let [[sym test] binds]
+              (if (has-terminators? test ctx)
+                ;; Test expression contains await
+                (let [cont (gensym "cont")]
+                  `(letfn [(~cont [test-result#]
+                             (if test-result#
+                               (let [~sym test-result#]
+                                 ~(invert (add-env-syms ctx [sym]) (first body)))
+                               ~(if (> (count body) 1)
+                                  ;; Has else clause
+                                  (invert ctx (second body))
+                                  ;; No else clause, return nil
+                                  `(~r nil))))]
+                     ~(invert (assoc ctx :r cont) test)))
+                ;; Test expression doesn't contain await, check body
+                (if (has-terminators? body ctx)
+                  ;; Body contains await but test doesn't  
+                  `(if-let [~sym ~test]
+                     ~(invert (add-env-syms ctx [sym]) (first body))
+                     ~(if (> (count body) 1)
+                        (invert ctx (second body))
+                        `(~r nil)))
+                  ;; No await in if-let, pass through unchanged
+                  `(~r ~form))))
+            ;; Invalid binding form, pass through
+            `(~r ~form)))
+
+        when-some
+        (let [[binds & body] tail]
+          (if (and (vector? binds) (= (count binds) 2))
+            (let [[sym test] binds]
+              (if (has-terminators? test ctx)
+                ;; Test expression contains await
+                (let [cont (gensym "cont")]
+                  `(letfn [(~cont [test-result#]
+                             (if (some? test-result#)
+                               (let [~sym test-result#]
+                                 ~(invert (add-env-syms ctx [sym]) `(do ~@body)))
+                               (~r nil)))]
+                     ~(invert (assoc ctx :r cont) test)))
+                ;; Test expression doesn't contain await, check body
+                (if (has-terminators? body ctx)
+                  ;; Body contains await but test doesn't  
+                  `(when-some [~sym ~test]
+                     ~(invert (add-env-syms ctx [sym]) `(do ~@body)))
+                  ;; No await in when-some, pass through unchanged
+                  `(~r ~form))))
+            ;; Invalid binding form, pass through
+            `(~r ~form)))
+
         (throw (ex-info (str "Unsupported special symbol [" head "]")
                         {:unknown-special-form head :form form})))
 
       (contains? terminators (var-name env head))
       (let [handler (terminators (var-name env head))]
         (resolve-sequentially ctx (rest form)
-                              (fn [args] 
-                                (if (= handler 'await-cps/do-await)
-                                  ;; Special handling for await: check for ImmediateValue
-                                  (let [first-arg (first args)]
-                                    `(letfn [(safe-r# [v#] (try (~r v#) (catch ~all-ex t# (~e t#))))]
-                                       (let [f# ~first-arg]
-                                         (if (await-cps/immediate? f#)
-                                           (safe-r# (await-cps/unwrap-immediate f#))  ; Fast path
-                                           ;; Slow path: treat as CPS function
-                                           (~handler safe-r# ~e f# ~@(rest args))))))  ; Slow path
-                                  ;; Original behavior for other terminators
-                                  `(letfn [(safe-r# [v#] (try (~r v#) (catch ~all-ex t# (~e t#))))]
-                                     (~handler safe-r# ~e ~@args))))))
+                              (fn [args]
+                                ;; Unified handling: all terminators use CPS
+                                `(letfn [(safe-r# [v#] (try (~r v#) (catch ~all-ex t# (~e t#))))]
+                                   (~handler safe-r# ~e ~@args)))))
 
       (seq? form)
       (resolve-sequentially ctx form (fn [form] `(~r ~(seq form))))

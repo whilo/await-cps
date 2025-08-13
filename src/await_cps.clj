@@ -5,36 +5,9 @@
   (:refer-clojure :exclude [await bound-fn])
   (:require [await-cps.ioc :refer [invert has-terminators? coroutine]]))
 
-;; Fast-path optimization: Special value type for immediate values
-(deftype ImmediateValue [val]
-  Object
-  (toString [this] (str "#<ImmediateValue " (pr-str val) ">"))
-  
-  clojure.lang.IObj
-  (withMeta [this meta] this) ; ImmediateValue doesn't support metadata
-  (meta [this] nil))
-
-(defn immediate 
-  "Wrap an immediate value to signal no suspension is needed"
-  [v]
-  (ImmediateValue. v))
-
-(defn immediate? 
-  "Check if a value is an immediate value"
-  [v]
-  (instance? ImmediateValue v))
-
-(defn unwrap-immediate
-  "Unwrap the value from an ImmediateValue"
-  [^ImmediateValue v]
-  (.-val v))
-
-(defn maybe-unwrap-immediate
-  "Potentially unwrap the value from an ImmediateValue"
-  [v]
-  (if (immediate? v)
-    (.-val ^ImmediateValue v)
-    v))
+;; Unified callback approach: No need for ImmediateValue wrapper
+;; All async functions return CPS functions that decide at call time
+;; whether to invoke callbacks synchronously or asynchronously
 
 (defn ^:no-doc bound-fn
   [f]
@@ -49,41 +22,40 @@
 
 (defn ^:no-doc do-await
   [r e f & args]
-  ;; Fast-path: Check if f is an ImmediateValue
-  (if (immediate? f)
-    (r (.val f))  ; Direct return without suspension
-    ;; Original CPS path
-    (let [state (atom [:start])
-          resolve (fn [v] (let [[[before r']]
-                                (swap-vals! state
-                                            #(case (first %)
-                                               :start [:resolved v]
-                                               :async [:completed]
-                                               %))]
-                            (when (= before :async) (r' v))))
-          raise (fn [t] (let [[[before _ e']]
+  ;; Unified approach: f is always a CPS function
+  ;; Fast path is when f calls the callback synchronously (same execution tick)
+  ;; Slow path is when f calls the callback asynchronously (different execution tick)
+  (let [state (atom [:start])
+        resolve (fn [v] (let [[[before r']]
                               (swap-vals! state
                                           #(case (first %)
-                                             :start [:raised t]
+                                             :start [:resolved v]
                                              :async [:completed]
                                              %))]
-                          (when (= before :async) (e' t))))]
-      (apply f (concat args [resolve raise]))
-      (let [run (bound-fn trampoline)
-            safe-r #(try (r %) (catch Throwable t (e t)))
-            other-thread-r #(run safe-r %)
-            other-thread-e #(run e %)
-            [[before x]]
-            (swap-vals! state
-                        #(case (first %)
-                           :start [:async other-thread-r other-thread-e]
-                           :resolved [:completed]
-                           :raised [:completed]
-                           %))]
-        (case before
-          :resolved (partial safe-r x)
-          :raised (partial e x)
-          nil)))))
+                          (when (= before :async) (r' v))))
+        raise (fn [t] (let [[[before _ e']]
+                            (swap-vals! state
+                                        #(case (first %)
+                                           :start [:raised t]
+                                           :async [:completed]
+                                           %))]
+                        (when (= before :async) (e' t))))]
+    (apply f (concat args [resolve raise]))
+    (let [run (bound-fn trampoline)
+          safe-r #(try (r %) (catch Throwable t (e t)))
+          other-thread-r #(run safe-r %)
+          other-thread-e #(run e %)
+          [[before x]]
+          (swap-vals! state
+                      #(case (first %)
+                         :start [:async other-thread-r other-thread-e]
+                         :resolved [:completed]
+                         :raised [:completed]
+                         %))]
+      (case before
+        :resolved (partial safe-r x)  ; Fast path: callback was called synchronously
+        :raised (partial e x)         ; Fast path: error thrown synchronously  
+        nil))))                       ; Slow path: suspended to async
 
 (defn ^:no-doc run-async
   [f resolve raise]
@@ -112,18 +84,23 @@
 (def ^:private cljs? (boolean (find-ns 'cljs.analyzer)))
 
 (defmacro async
-  "Returns a callback that await can consume directly.
-   If body contains no await calls, returns an ImmediateValue.
-   If body contains await calls, returns a CPS function."
+  "Returns a unified CPS function that decides at call time whether to invoke callbacks synchronously or asynchronously.
+   If body contains no await calls, calls resolve callback synchronously.
+   If body contains await calls, returns a CPS function that may call callbacks asynchronously."
   [& body]
   (let [ctx {:terminators terminators
              :env &env}
         has-await? (has-terminators? `(do ~@body) ctx)]
     (if has-await?
-      ;; Slow path: invoke CPS function - use the original coroutine approach
+      ;; Slow path: CPS function that may suspend
       `(fn [r# e#] (run-async (coroutine ~terminators ~@body) r# e#))
-      ;; Fast path: return immediate value
-      `(immediate (do ~@body)))))
+      ;; Fast path: synchronous callback invocation
+      `(fn [r# e#]
+         (try
+           (let [result# (do ~@body)]
+             (r# result#))
+           (catch ~(if (:js-globals &env) :default `Throwable) t#
+             (e# t#)))))))
 
 (defmacro afn
   "Defines an asynchronous function. Declared arguments are extended with two

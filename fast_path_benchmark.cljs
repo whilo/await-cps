@@ -1,5 +1,5 @@
 (ns fast-path-benchmark
-  (:require [await-cps :refer [immediate immediate? unwrap-immediate await]])
+  (:require [await-cps :refer [await]])
   (:require-macros [await-cps :refer [async]]))
 
 (enable-console-print!)
@@ -8,9 +8,9 @@
 
 ;; Test scenarios for fast-path optimization
 
-;; 1. Immediate value function (should use fast path)
-(defn immediate-fn [x]
-  (immediate (* x 2)))
+;; 1. Synchronous function (should use fast path)
+(defn sync-fn [x]
+  (async (* x 2)))
 
 ;; 2. Regular CPS function that does the same computation as immediate-fn
 (defn slow-fn [x]
