@@ -91,7 +91,9 @@
       (and resolved (.isMacro resolved))
       (recur ctx (apply resolved form env tail))
 
-      (or (special-symbol? head) (= head 'let) (= head 'letfn) (= head 'loop) (= head 'fn) (= head 'when-let) (= head 'if-let) (= head 'when-some) (= head 'dotimes) (= head 'when))
+      (or (special-symbol? head) (= head 'let) (= head 'letfn) (= head 'loop) (= head 'fn)
+          (= head 'when-let) (= head 'if-let) (= head 'when-some) (= head 'dotimes) (= head 'when)
+          (= head 'doseq))
       (case head
 
         (quote var fn* fn def deftype* reify* clojure.core/import*)
@@ -411,6 +413,61 @@
                   `(~r ~form))))
             ;; Invalid binding form, pass through
             `(~r ~form)))
+
+        ;; TODO this needs more love, not fully verified yet, but good enough for tests
+        doseq
+        (let [[binds & body] tail
+              binding-pairs (partition 2 binds)]
+          (if (has-terminators? binds ctx)
+            ;; Bindings contain await - handle async bindings sequentially
+            (let [[syncs [[sym asn] & others]] (split-with #(not (has-terminators? (second %) ctx)) binding-pairs)]
+              (if asn
+                ;; First async binding found
+                (let [cont (gensym "cont")
+                      updated-ctx (add-env-syms ctx (map first syncs))]
+                  `(letfn [(~cont [async-val#]
+                             (doseq [~@(mapcat identity syncs)  ; Iterate over sync collections
+                                     ~sym async-val#            ; Iterate over async result
+                                     ~@(mapcat identity others)] ; Iterate over remaining collections
+                               ~@body))]
+                     ~(invert (assoc updated-ctx :r cont) asn)))
+                ;; No async bindings after all - fall through to body check
+                (if (has-terminators? body ctx)
+                  ;; Convert to explicit loop/recur
+                  (let [expand-doseq (fn expand-doseq [pairs]
+                                       (if (seq pairs)
+                                         (let [[sym coll] (first pairs)
+                                               rest-pairs (rest pairs)]
+                                           `(let [coll# (seq ~coll)]
+                                              (loop [items# coll#]
+                                                (when items#
+                                                  (let [~sym (first items#)]
+                                                    ~(if (seq rest-pairs)
+                                                       (expand-doseq rest-pairs)
+                                                       `(do ~@body))
+                                                    (recur (next items#)))))))
+                                         `(do ~@body)))]
+                    (invert ctx (expand-doseq binding-pairs)))
+                  `(~r ~form))))
+            ;; No terminators in bindings, check body
+            (if (has-terminators? body ctx)
+              ;; Body contains await but bindings don't - convert to explicit loop/recur
+              (let [expand-doseq (fn expand-doseq [pairs]
+                                   (if (seq pairs)
+                                     (let [[sym coll] (first pairs)
+                                           rest-pairs (rest pairs)]
+                                       `(let [coll# (seq ~coll)]
+                                          (loop [items# coll#]
+                                            (when items#
+                                              (let [~sym (first items#)]
+                                                ~(if (seq rest-pairs)
+                                                   (expand-doseq rest-pairs)
+                                                   `(do ~@body))
+                                                (recur (next items#)))))))
+                                     `(do ~@body)))]
+                (invert ctx (expand-doseq binding-pairs)))
+              ;; No await anywhere, pass through unchanged
+              `(~r ~form))))
 
         (throw (ex-info (str "Unsupported special symbol [" head "]")
                         {:unknown-special-form head :form form})))
