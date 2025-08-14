@@ -5,26 +5,6 @@
   (:refer-clojure :exclude [await bound-fn])
   (:require-macros await-cps))
 
-;; Immediate value optimization: Functions can return immediate values
-;; for synchronous operations to bypass CPS machinery
-
-(deftype ImmediateValue [val])
-
-(defn immediate 
-  "Wrap a value as immediately available"
-  [v] 
-  (ImmediateValue. v))
-
-(defn immediate? 
-  "Check if value is immediately available"
-  [v] 
-  (instance? ImmediateValue v))
-
-(defn unwrap-immediate 
-  "Extract value from immediate wrapper"
-  [^ImmediateValue v] 
-  (.-val v))
-
 (def ^:no-doc bound-fn identity)
 
 (defn ^:no-doc run-async
@@ -56,9 +36,7 @@
                                            :async [:completed]
                                            %))]
                         (when (= before :async) (e' t))))]
-    (let [return-val (apply f (concat args [resolve raise]))]
-      (when (immediate? return-val)
-        (println "WARNING: CPS function returned immediate value instead of calling callbacks")))
+    (apply f (concat args [resolve raise]))
     (let [run (bound-fn trampoline)
           safe-r #(try (r %) (catch :default t (e t)))
           other-thread-r #(run safe-r %)
