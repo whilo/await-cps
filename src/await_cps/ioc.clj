@@ -91,7 +91,7 @@
       (and resolved (.isMacro resolved))
       (recur ctx (apply resolved form env tail))
 
-      (or (special-symbol? head) (= head 'let) (= head 'letfn) (= head 'loop) (= head 'fn) (= head 'when-let) (= head 'if-let) (= head 'when-some) (= head 'dotimes))
+      (or (special-symbol? head) (= head 'let) (= head 'letfn) (= head 'loop) (= head 'fn) (= head 'when-let) (= head 'if-let) (= head 'when-some) (= head 'dotimes) (= head 'when))
       (case head
 
         (quote var fn* fn def deftype* reify* clojure.core/import*)
@@ -107,6 +107,25 @@
                                          ~@unexpected-others))]
                  ~(invert (assoc ctx :r cont) con)))
             `(if ~con ~(invert ctx left) ~(invert ctx right))))
+
+        when
+        (let [[test & body] tail]
+          (if (has-terminators? test ctx)
+            ;; Test expression contains await
+            (let [cont (gensym "cont")]
+              `(letfn [(~cont [test-result#]
+                         (if test-result#
+                           ~(invert ctx `(do ~@body))
+                           (~r nil)))]
+                 ~(invert (assoc ctx :r cont) test)))
+            ;; Test expression doesn't contain await, check body
+            (if (has-terminators? body ctx)
+              ;; Body contains await but test doesn't  
+              `(if ~test
+                 ~(invert ctx `(do ~@body))
+                 (~r nil))
+              ;; No await in when, pass through unchanged
+              `(~r ~form))))
 
         case*
         (let [[ge shift mask default imap & args] tail
@@ -285,29 +304,6 @@
             (resolve-sequentially ctx args
                                   (fn [args] `(~r (set! ~subject ~@args))))))
 
-        when-let
-        (let [[binds & body] tail]
-          (if (and (vector? binds) (= (count binds) 2))
-            (let [[sym test] binds]
-              (if (has-terminators? test ctx)
-                ;; Test expression contains await
-                (let [cont (gensym "cont")]
-                  `(letfn [(~cont [test-result#]
-                             (if test-result#
-                               (let [~sym test-result#]
-                                 ~(invert (add-env-syms ctx [sym]) `(do ~@body)))
-                               (~r nil)))]
-                     ~(invert (assoc ctx :r cont) test)))
-                ;; Test expression doesn't contain await, check body
-                (if (has-terminators? body ctx)
-                  ;; Body contains await but test doesn't  
-                  `(when-let [~sym ~test]
-                     ~(invert (add-env-syms ctx [sym]) `(do ~@body)))
-                  ;; No await in when-let, pass through unchanged
-                  `(~r ~form))))
-            ;; Invalid binding form, pass through
-            `(~r ~form)))
-
         if-let
         (let [[binds & body] tail]
           (if (and (vector? binds) (= (count binds) 2))
@@ -338,6 +334,60 @@
             ;; Invalid binding form, pass through
             `(~r ~form)))
 
+        when-let
+        (let [[binds & body] tail]
+          (if (and (vector? binds) (= (count binds) 2))
+            (let [[sym test] binds]
+              (if (has-terminators? test ctx)
+                ;; Test expression contains await
+                (let [cont (gensym "cont")]
+                  `(letfn [(~cont [test-result#]
+                             (if test-result#
+                               (let [~sym test-result#]
+                                 ~(invert (add-env-syms ctx [sym]) `(do ~@body)))
+                               (~r nil)))]
+                     ~(invert (assoc ctx :r cont) test)))
+                ;; Test expression doesn't contain await, check body
+                (if (has-terminators? body ctx)
+                  ;; Body contains await but test doesn't  
+                  `(if-let [~sym ~test]
+                     ~(invert (add-env-syms ctx [sym]) `(do ~@body))
+                     (~r nil))
+                  ;; No await in when-let, pass through unchanged
+                  `(~r ~form))))
+            ;; Invalid binding form, pass through
+            `(~r ~form)))
+
+        if-some
+        (let [[binds & body] tail]
+          (if (and (vector? binds) (= (count binds) 2))
+            (let [[sym test] binds]
+              (if (has-terminators? test ctx)
+                ;; Test expression contains await
+                (let [cont (gensym "cont")]
+                  `(letfn [(~cont [test-result#]
+                             (if (some? test-result#)
+                               (let [~sym test-result#]
+                                 ~(invert (add-env-syms ctx [sym]) (first body)))
+                               ~(if (> (count body) 1)
+                                  ;; Has else clause
+                                  (invert ctx (second body))
+                                  ;; No else clause, return nil
+                                  `(~r nil))))]
+                     ~(invert (assoc ctx :r cont) test)))
+                ;; Test expression doesn't contain await, check body
+                (if (has-terminators? body ctx)
+                  ;; Body contains await but test doesn't  
+                  `(if-some [~sym ~test]
+                     ~(invert (add-env-syms ctx [sym]) (first body))
+                     ~(if (> (count body) 1)
+                        (invert ctx (second body))
+                        `(~r nil)))
+                  ;; No await in if-some, pass through unchanged
+                  `(~r ~form))))
+            ;; Invalid binding form, pass through
+            `(~r ~form)))
+
         when-some
         (let [[binds & body] tail]
           (if (and (vector? binds) (= (count binds) 2))
@@ -354,8 +404,9 @@
                 ;; Test expression doesn't contain await, check body
                 (if (has-terminators? body ctx)
                   ;; Body contains await but test doesn't  
-                  `(when-some [~sym ~test]
-                     ~(invert (add-env-syms ctx [sym]) `(do ~@body)))
+                  `(if-some [~sym ~test]
+                     ~(invert (add-env-syms ctx [sym]) `(do ~@body))
+                     (~r nil))
                   ;; No await in when-some, pass through unchanged
                   `(~r ~form))))
             ;; Invalid binding form, pass through
@@ -370,7 +421,7 @@
         (resolve-sequentially ctx (rest form)
                               (fn [args]
                                 `(letfn [(safe-r# [v#] (try (~r v#) (catch ~all-ex t# (~e t#))))]
-                                     (fn [] (~(first args) safe-r# ~e)))
+                                   (fn [] (~(first args) safe-r# ~e)))
                                 #_(if (= 1 (count args))
                                     ;; Single argument case - check if it's immediate
                                     `(let [arg# ~(first args)]
