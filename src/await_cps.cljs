@@ -27,11 +27,20 @@
 
 (def ^:no-doc bound-fn identity)
 
+(defn ^:no-doc run-async
+  [f resolve raise]
+  (let [run (bound-fn trampoline)]
+    (try
+      (run f resolve raise)
+      (catch :default e
+        (raise e)))))
+
 (defn ^:no-doc do-await
   [r e f & args]
   ;; f should be a CPS function since IOC handles immediate values
   ;; Fast path is when f calls the callback synchronously (same execution tick)
   ;; Slow path is when f calls the callback asynchronously (different execution tick)
+
   (let [state (atom [:start])
         resolve (fn [v] (let [[[before r']]
                               (swap-vals! state
@@ -65,14 +74,6 @@
         :resolved (fn [] (safe-r x))  ; Fast path: callback was called synchronously, trampolined
         :raised (fn [] (e x))         ; Fast path: error thrown synchronously, trampolined  
         nil))))                       ; Slow path: suspended to async
-
-(defn ^:no-doc run-async
-  [f resolve raise]
-  (let [run (bound-fn trampoline)]
-    (try
-      (run f resolve raise)
-      (catch :default e
-        (raise e)))))
 
 (defn await
   "Awaits the asynchronous execution of continuation-passing style function

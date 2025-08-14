@@ -93,7 +93,7 @@
         has-await? (has-terminators? `(do ~@body) ctx)]
     (if has-await?
       ;; Slow path: CPS function that may suspend
-      `(fn [r# e#] (run-async (coroutine ~terminators ~@body) r# e#))
+      `(coroutine ~terminators ~@body) #_(fn [r# e#] (run-async (coroutine ~terminators ~@body) r# e#))
       ;; Fast path: synchronous callback invocation
       `(fn [r# e#]
          (try

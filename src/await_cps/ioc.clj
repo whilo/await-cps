@@ -369,21 +369,29 @@
       (let [handler (terminators (var-name env head))]
         (resolve-sequentially ctx (rest form)
                               (fn [args]
-                                (if (= 1 (count args))
-                                  ;; Single argument case - check if it's immediate
-                                  `(let [arg# ~(first args)]
-                                     (if (await-cps/immediate? arg#)
-                                       ;; Fast path: immediate value - bypass handler entirely
+                                `(letfn [(safe-r# [v#] (try (~r v#) (catch ~all-ex t# (~e t#))))]
+                                     (fn [] (~(first args) safe-r# ~e)))
+                                #_(if (= 1 (count args))
+                                    ;; Single argument case - check if it's immediate
+                                    `(let [arg# ~(first args)]
+                                       (if (await-cps/immediate? arg#)
+                                         ;; Fast path: immediate value - bypass handler entirely
+                                         (do
+                                           (println "Hitting immediate value")
+                                           (fn []
+                                             (println "Hitting immediate value")
+                                             (try
+                                               (~r (await-cps/unwrap-immediate arg#))
+                                               (catch ~all-ex t# (~e t#)))))
+                                         ;; Slow path: call handler with trampoline to prevent stack overflow
+                                         (letfn [(safe-r# [v#] (fn [] (try (~r v#) (catch ~all-ex t# (~e t#)))))]
+                                           (println "Calling handler with single arg")
+                                           (fn [] (arg# safe-r# ~e)))))
+                                    ;; Multiple arguments - always use handler with trampoline
+                                    `(letfn [(safe-r# [v#] (try (~r v#) (catch ~all-ex t# (~e t#))))]
                                        (fn []
-                                         (try
-                                           (~r (await-cps/unwrap-immediate arg#))
-                                           (catch ~all-ex t# (~e t#))))
-                                       ;; Slow path: call handler with trampoline to prevent stack overflow
-                                       (letfn [(safe-r# [v#] (try (~r v#) (catch ~all-ex t# (~e t#))))]
-                                         (fn [] (~handler safe-r# ~e arg#)))))
-                                  ;; Multiple arguments - always use handler with trampoline
-                                  `(letfn [(safe-r# [v#] (try (~r v#) (catch ~all-ex t# (~e t#))))]
-                                     (fn [] (~handler safe-r# ~e ~@args)))))))
+                                         (println "Hitting handler with multiple args")
+                                         (~handler safe-r# ~e ~@args)))))))
 
       ;; TODO this should actually be last, vector is seq?
       (seq? form)
