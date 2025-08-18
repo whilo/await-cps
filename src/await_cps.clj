@@ -57,6 +57,11 @@
         :raised (partial e x)         ; Fast path: error thrown synchronously  
         nil))))                       ; Slow path: suspended to async
 
+(defn ^:no-doc ->thunk
+  "Create a thunk for trampolining (Clojure version - just return the function)"
+  [f]
+  f)
+
 (defn ^:no-doc run-async
   [f resolve raise]
   (let [run (bound-fn trampoline)]

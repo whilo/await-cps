@@ -231,8 +231,10 @@
           form
 
           recur-target
-          ;; Activate trampoline by wrapping in a fn
-          (resolve-sequentially ctx tail (fn [args] `(fn [] (~recur-target ~@args))))
+          ;; Activate trampoline by wrapping in a thunk
+          (resolve-sequentially ctx tail 
+                                (fn [args] 
+                                  `(await-cps/->thunk (fn [] (~recur-target ~@args)))))
 
           :else (throw (ex-info "Can't recur outside loop" {:form form})))
 
@@ -478,7 +480,7 @@
         (resolve-sequentially ctx (rest form)
                               (fn [args]
                                 `(letfn [(safe-r# [v#] (try (~r v#) (catch ~all-ex t# (~e t#))))]
-                                   (fn [] (~(first args) safe-r# ~e))))))
+                                   (await-cps/->thunk (fn [] (~(first args) safe-r# ~e)))))))
 
       ;; TODO this should actually be last, vector is seq?
       (seq? form)
@@ -512,4 +514,4 @@
   (let [r (gensym) e (gensym)
         params {:r r :e e :env &env :terminators terms}
         expanded (macroexpand-all (cons 'do body))]
-    `(fn [~r ~e] (fn [] ~(invert params expanded)))))
+    `(fn [~r ~e] (await-cps/->thunk (fn [] ~(invert params expanded))))))

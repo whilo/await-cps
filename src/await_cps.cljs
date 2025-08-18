@@ -7,13 +7,29 @@
 
 (def ^:no-doc bound-fn identity)
 
+(deftype Thunk [f]
+  IFn
+  (-invoke [_] (f)))
+
+(defn ^:no-doc ->thunk
+  "Create a thunk for trampolining"
+  [f]
+  (Thunk. f))
+
+(defn ^:no-doc smart-trampoline
+  "Trampoline that only bounces on Thunk instances, allowing functions to be returned as values"
+  [f & args]
+  (loop [result (apply f args)]
+    (if (instance? Thunk result)
+      (recur (result))  ; Continue trampolining thunks
+      result)))         ; Stop - return any other value (including functions)
+
 (defn ^:no-doc run-async
   [f resolve raise]
-  (let [run (bound-fn trampoline)]
-    (try
-      (run f resolve raise)
-      (catch :default e
-        (raise e)))))
+  (try
+    (smart-trampoline f resolve raise)
+    (catch :default e
+      (raise e))))
 
 (defn ^:no-doc do-await
   [r e f & args]
@@ -37,10 +53,19 @@
                                            %))]
                         (when (= before :async) (e' t))))]
     (apply f (concat args [resolve raise]))
-    (let [run (bound-fn trampoline)
-          safe-r #(try (r %) (catch :default t (e t)))
-          other-thread-r #(run safe-r %)
-          other-thread-e #(run e %)
+    (let [safe-r #(try (r %) (catch :default t (e t)))
+          other-thread-r (fn [v] 
+                          ;; Call continuation and if it returns a Thunk, trampoline it
+                          (let [result (safe-r v)]
+                            (if (instance? Thunk result)
+                              (smart-trampoline result)
+                              result)))
+          other-thread-e (fn [t]
+                          ;; Call error handler and if it returns a Thunk, trampoline it  
+                          (let [result (e t)]
+                            (if (instance? Thunk result)
+                              (smart-trampoline result)
+                              result)))
           [[before x]]
           (swap-vals! state
                       #(case (first %)
@@ -49,9 +74,9 @@
                          :raised [:completed]
                          %))]
       (case before
-        :resolved (fn [] (safe-r x))  ; Fast path: callback was called synchronously, trampolined
-        :raised (fn [] (e x))         ; Fast path: error thrown synchronously, trampolined  
-        nil))))                       ; Slow path: suspended to async
+        :resolved (->thunk #(safe-r x))  ; Fast path: callback was called synchronously, trampolined
+        :raised (->thunk #(e x))         ; Fast path: error thrown synchronously, trampolined  
+        nil))))                          ; Slow path: suspended to async
 
 (defn await
   "Awaits the asynchronous execution of continuation-passing style function
