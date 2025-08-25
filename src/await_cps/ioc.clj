@@ -280,35 +280,8 @@
   [terms & body]
   (let [r (gensym) e (gensym)
         params {:r r :e e :env &env :terminators terms}
-        _ (do (binding [*out* *err*]
-                (println "[COROUTINE] Called with body:" body)
-                (println "[COROUTINE] &env type:" (type &env))
-                (flush))
-              (spit "/tmp/await-cps-debug.log" 
-                    (str "\n===== COROUTINE " (java.time.LocalDateTime/now) " =====\n"
-                         "Body: " body "\n"
-                         "&env type: " (type &env) "\n")
-                    :append true))
         expanded (try
-                   (binding [*out* *err*]
-                     (println "[COROUTINE] Calling macroexpand-all on:" (cons 'do body))
-                     (flush))
-                   (let [result (macroexpand-all (cons 'do body))]
-                     (binding [*out* *err*]
-                       (println "[COROUTINE] Success! Expanded to:" result)
-                       (flush))
-                     (spit "/tmp/await-cps-debug.log"
-                           (str "macroexpand-all SUCCESS: " result "\n")
-                           :append true)
-                     result)
+                   (macroexpand-all (cons 'do body))
                    (catch Exception e
-                     (binding [*out* *err*]
-                       (println "[COROUTINE ERROR] macroexpand-all failed:" (.getMessage e))
-                       (.printStackTrace e *err*)
-                       (flush))
-                     (spit "/tmp/await-cps-debug.log"
-                           (str "ERROR: " (.getMessage e) "\n"
-                                (with-out-str (.printStackTrace e)) "\n")
-                           :append true)
                      (throw e)))]
     `(fn [~r ~e] (await-cps/->thunk (fn [] ~(invert params expanded))))))
