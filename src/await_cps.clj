@@ -93,12 +93,16 @@
    If body contains no await calls, calls resolve callback synchronously.
    If body contains await calls, returns a CPS function that may call callbacks asynchronously."
   [& body]
+  
   (let [ctx {:terminators terminators
              :env &env}
-        has-await? (has-terminators? `(do ~@body) ctx)]
+        has-await? (try
+                     (has-terminators? `(do ~@body) ctx)
+                     (catch Exception e
+                       (throw e)))]
     (if has-await?
       ;; Slow path: CPS function that may suspend
-      `(coroutine ~terminators ~@body) #_(fn [r# e#] (run-async (coroutine ~terminators ~@body) r# e#))
+      `(coroutine ~terminators ~@body)
       ;; Fast path: synchronous callback invocation
       `(fn [r# e#]
          (try

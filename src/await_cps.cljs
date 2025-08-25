@@ -38,34 +38,42 @@
   ;; Slow path is when f calls the callback asynchronously (different execution tick)
 
   (let [state (atom [:start])
-        resolve (fn [v] (let [[[before r']]
-                              (swap-vals! state
-                                          #(case (first %)
-                                             :start [:resolved v]
-                                             :async [:completed]
-                                             %))]
-                          (when (= before :async) (r' v))))
-        raise (fn [t] (let [[[before _ e']]
-                            (swap-vals! state
-                                        #(case (first %)
-                                           :start [:raised t]
-                                           :async [:completed]
-                                           %))]
-                        (when (= before :async) (e' t))))]
+        resolve (fn [v] 
+                  (let [[[before r']]
+                        (swap-vals! state
+                                    #(case (first %)
+                                       :start [:resolved v]
+                                       :async [:completed]
+                                       %))]
+                    (when (= before :async) 
+                      ;; FIXED: Call r' directly and handle the result properly
+                      (r' v))))
+        raise (fn [t] 
+                (let [[[before _ e']]
+                      (swap-vals! state
+                                  #(case (first %)
+                                     :start [:raised t]
+                                     :async [:completed]
+                                     %))]
+                  (when (= before :async) 
+                    ;; FIXED: Call e' directly
+                    (e' t))))]
     (apply f (concat args [resolve raise]))
     (let [safe-r #(try (r %) (catch :default t (e t)))
+          ;; FIXED: Properly handle the slow path callbacks
           other-thread-r (fn [v] 
-                          ;; Call continuation and if it returns a Thunk, trampoline it
+                          ;; Call the continuation and handle result
                           (let [result (safe-r v)]
-                            (if (instance? Thunk result)
-                              (smart-trampoline result)
-                              result)))
+                            ;; If result is a Thunk, start trampoline to continue execution
+                            ;; The trampoline will run until completion
+                            (when (instance? Thunk result)
+                              (smart-trampoline result))))
           other-thread-e (fn [t]
-                          ;; Call error handler and if it returns a Thunk, trampoline it  
+                          ;; Call the error handler and handle result  
                           (let [result (e t)]
-                            (if (instance? Thunk result)
-                              (smart-trampoline result)
-                              result)))
+                            ;; If result is a Thunk, start trampoline to continue execution
+                            (when (instance? Thunk result)
+                              (smart-trampoline result))))
           [[before x]]
           (swap-vals! state
                       #(case (first %)
